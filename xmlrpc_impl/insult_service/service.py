@@ -1,69 +1,81 @@
-# xmlrpc_impl/insult_service/service.py
-"""
-InsultService (XML-RPC)
-- add_insult(text)
-- get_insults()
-- subscribe(host,port)
-- broadcaster envía un insulto aleatorio cada 5s a subscriptores
-"""
 from xmlrpc.server import SimpleXMLRPCServer, SimpleXMLRPCRequestHandler
-import multiprocessing, time, random, xmlrpc.client
+import threading, time, random, xmlrpc.client, redis, argparse, sys
 
 class InsultService:
-    def __init__(self, insults, subscribers):
-        self.insults = insults        # multiprocessing.Manager().list()
-        self.subscribers = subscribers  # multiprocessing.Manager().list()
+    def __init__(self, redis_host='localhost', redis_port=6379):
+        # Conexión a Redis para estado compartido
+        self.r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+        self.insults_key = 'insults'
+        self.subs_key = 'subscribers'
+        # Limpiar estado previo
+        self.r.delete(self.insults_key, self.subs_key)
 
     def add_insult(self, text):
-        if text not in self.insults:
-            self.insults.append(text)
-            return True
-        return False
+        # Añade insulto si no existe
+        added = self.r.sadd(self.insults_key, text)
+        # Si se añadió, notificar inmediatamente a subscriptores
+        if added:
+            subs = self.r.smembers(self.subs_key)
+            for sub in subs:
+                host, port = sub.split(':')
+                try:
+                    proxy = xmlrpc.client.ServerProxy(f'http://{host}:{port}', allow_none=True)
+                    proxy.receive_insult(text)
+                except Exception:
+                    # Elimina subcriptor caído
+                    self.r.srem(self.subs_key, sub)
+        return bool(added)
 
     def get_insults(self):
-        return list(self.insults)
+        return list(self.r.smembers(self.insults_key))
 
     def subscribe(self, host, port):
-        sub = (host, port)
-        if sub not in self.subscribers:
-            self.subscribers.append(sub)
+        sub = f"{host}:{port}"
+        self.r.sadd(self.subs_key, sub)
         return True
 
     def _broadcaster(self):
-        # lee periódicamente insultos y subs
+        # Envíos periódicos cada 5s
         while True:
             time.sleep(5)
-            if not self.insults or not self.subscribers:
+            insults = self.get_insults()
+            subs = self.r.smembers(self.subs_key)
+            if not insults or not subs:
                 continue
-            insult = random.choice(self.insults)
-            for host, port in list(self.subscribers):
+            insult = random.choice(insults)
+            for sub in list(subs):
+                host, port = sub.split(':')
                 try:
                     proxy = xmlrpc.client.ServerProxy(f'http://{host}:{port}', allow_none=True)
                     proxy.receive_insult(insult)
-                except:
-                    pass
+                except Exception:
+                    self.r.srem(self.subs_key, sub)
 
 
 def main():
-    # Estado compartido por Manager
-    mgr = multiprocessing.Manager()
-    insults = mgr.list()
-    subscribers = mgr.list()
+    # Ignorar opciones de pytest
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--port', type=int, default=8000)
+    args, _ = parser.parse_known_args()
+    port = args.port
 
+    # Configurar servidor
     class RequestHandler(SimpleXMLRPCRequestHandler):
         rpc_paths = ('/RPC2',)
 
-    server = SimpleXMLRPCServer(('0.0.0.0', 8000), requestHandler=RequestHandler, allow_none=True)
-    svc = InsultService(insults, subscribers)
+    server = SimpleXMLRPCServer(('localhost', port), requestHandler=RequestHandler, allow_none=True)
+    svc = InsultService()
     server.register_instance(svc)
 
-    # broadcaster en proceso separado
-    broadcaster_proc = multiprocessing.Process(target=svc._broadcaster, daemon=True)
-    broadcaster_proc.start()
+    # Lanzar broadcaster en hilo demonio
+    t = threading.Thread(target=svc._broadcaster, daemon=True)
+    t.start()
 
-    print("[InsultService] corriendo en puerto 8000...")
-    server.serve_forever()
-
+    print(f"[InsultService] corriendo en puerto {port}...")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 if __name__ == '__main__':
     main()
