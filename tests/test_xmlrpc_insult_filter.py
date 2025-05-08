@@ -5,6 +5,10 @@ sys.path.insert(0, root)
 import xmlrpc_impl.insult_service.service as svc_mod
 import xmlrpc_impl.insult_filter.service as filt_mod
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*isSet\\(\\) is deprecated.*:DeprecationWarning"
+)
+
 @pytest.fixture(scope='module', autouse=True)
 def start_both():
     p1 = multiprocessing.Process(target=svc_mod.main)

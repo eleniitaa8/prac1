@@ -4,6 +4,10 @@ root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, root)
 import xmlrpc_impl.insult_service.service as svc_mod
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*isSet\\(\\) is deprecated.*:DeprecationWarning"
+)
+
 @pytest.fixture(scope='module', autouse=True)
 def start_srv():
     p = multiprocessing.Process(target=svc_mod.main)

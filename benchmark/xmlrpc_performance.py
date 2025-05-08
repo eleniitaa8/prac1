@@ -41,7 +41,8 @@ def worker_task(args):
             text = ''.join(random.choices(string.ascii_lowercase, k=8))
         else:
             text = 'badword ' + ''.join(random.choices(string.ascii_lowercase, k=16))
-        proxy = proxies[i % len(proxies)]
+        proxy = proxies[i % len(proxies)] ## Round Robin entre proxies
+        # Se reparten las peticiones de forma cíclica.
         try:
             if service == 'insult':
                 proxy.add_insult(text)
@@ -71,7 +72,7 @@ if __name__ == '__main__':
                         help='Número de hilos/clientes concurrentes')
     args = parser.parse_args()
 
-    # Determinar puertos según servicio
+    # Determinar puertos según servicios
     base_port = 8000 if args.service == 'insult' else 8010
     ports = [base_port + i for i in range(args.nodes)]
 

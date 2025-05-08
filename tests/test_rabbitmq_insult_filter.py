@@ -14,6 +14,10 @@ import uuid
 from rabbitmq_impl.insult_service import service as srv_mod
 from rabbitmq_impl.insult_filter.worker import worker
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*isSet\\(\\) is deprecated.*:DeprecationWarning"
+)
+
 # helper RPC
 def rpc_call(method, text=None):
     conn = pika.BlockingConnection(pika.ConnectionParameters('localhost'))

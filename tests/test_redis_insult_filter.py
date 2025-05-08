@@ -1,6 +1,10 @@
 import pytest, redis, multiprocessing, time
 from redis_impl.insult_filter.worker import worker
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*isSet\\(\\) is deprecated.*:DeprecationWarning"
+)
+
 @pytest.fixture(scope='module')
 def rds():
     r = redis.Redis()

@@ -1,53 +1,78 @@
 import Pyro4
-import multiprocessing, time, random
+import argparse, threading, time, random, Pyro4, redis
 
 @Pyro4.expose
 class InsultService:
-    def __init__(self, insults, subscribers):
-        self.insults = insults        # Manager().list()
-        self.subscribers = subscribers
+    def __init__(self, redis_host='localhost', redis_port=6379):
+        # Conexión a Redis para estado compartido
+        self.r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+        self.insults_key = 'insults'
+        self.subs_key = 'subscribers'
+        # Limpiar estado previo
+        self.r.delete(self.insults_key, self.subs_key)
 
     def add_insult(self, text):
-        if text not in self.insults:
-            self.insults.append(text)
-            return True
-        return False
+        # Añade insulto si no existe
+        added = self.r.sadd(self.insults_key, text)
+        if added:
+            # Notificar inmediatamente a suscriptores activos
+            subs = list(self.r.smembers(self.subs_key))
+            for sub in subs:
+                try:
+                    host, port = sub.split(':')
+                    uri = f"PYRO:CallbackServer@{host}:{port}"
+                    proxy = Pyro4.Proxy(uri)
+                    proxy.receive_insult(text)
+                except Exception:
+                    # Eliminar suscriptor caído
+                    self.r.srem(self.subs_key, sub)
+        return bool(added)
 
     def get_insults(self):
-        return list(self.insults)
+        # Recupera todos los insultos
+        return list(self.r.smembers(self.insults_key))
 
-    def subscribe(self, callback_uri):
-        if callback_uri not in self.subscribers:
-            self.subscribers.append(callback_uri)
+    def subscribe(self, host, port):
+        # Registrar suscriptor (host:port)
+        sub = f"{host}:{port}"
+        self.r.sadd(self.subs_key, sub)
         return True
 
     def _broadcaster(self):
+        # Envíos periódicos cada 5s
         while True:
             time.sleep(5)
-            if not self.insults or not self.subscribers:
+            insults = list(self.r.smembers(self.insults_key))
+            subs = list(self.r.smembers(self.subs_key))
+            if not insults or not subs:
                 continue
-            insult = random.choice(self.insults)
-            for uri in list(self.subscribers):
+            insult = random.choice(insults)
+            for sub in subs:
                 try:
-                    cb = Pyro4.Proxy(uri)
-                    cb.receive_insult(insult)
-                except:
-                    continue
+                    host, port = sub.split(':')
+                    uri = f"PYRO:CallbackServer@{host}:{port}"
+                    proxy = Pyro4.Proxy(uri)
+                    proxy.receive_insult(insult)
+                except Exception:
+                    self.r.srem(self.subs_key, sub)
 
 def main():
-    mgr = multiprocessing.Manager()
-    insults = mgr.list()
-    subscribers = mgr.list()
+    parser = argparse.ArgumentParser(description='Pyro InsultService with Redis backend')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind the Pyro daemon')
+    parser.add_argument('--port', type=int, required=True, help='Port to bind the Pyro daemon')
+    parser.add_argument('--redis-host', default='localhost', help='Redis host')
+    parser.add_argument('--redis-port', type=int, default=6379, help='Redis port')
+    args = parser.parse_args()
 
-    daemon = Pyro4.Daemon(host="0.0.0.0", port=9000)
-    uri = daemon.register(InsultService(insults, subscribers), objectId="InsultService")
+    service = InsultService(args.redis_host, args.redis_port)
+
+    # Lanzar broadcaster en hilo demonio
+    threading.Thread(target=service._broadcaster, daemon=True).start()
+
+    # Configurar Pyro Daemon
+    daemon = Pyro4.Daemon(host=args.host, port=args.port)
+    uri = daemon.register(service, objectId="InsultService")
     print(f"[InsultService] URI: {uri}")
-
-    # broadcaster
-    service = InsultService(insults, subscribers)
-    p = multiprocessing.Process(target=service._broadcaster)
-    p.start()
-
     daemon.requestLoop()
 
 if __name__ == '__main__':

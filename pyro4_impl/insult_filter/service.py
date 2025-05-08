@@ -1,40 +1,43 @@
-import Pyro4, multiprocessing
+import argparse
+import Pyro4
+import redis
 
 @Pyro4.expose
 class InsultFilterService:
-    def __init__(self, insult_service_uri, results):
-        self.insult_url = insult_service_uri
-        self.results = results  # Manager().list()
-        self.insults_cache = None
-
-    def _load_insults(self):
-        svc = Pyro4.Proxy(self.insult_url)
-        self.insults_cache = svc.get_insults()
+    def __init__(self, redis_host='localhost', redis_port=6379):
+        # Conexión Redis para insults y resultados
+        self.r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
+        self.insults_key = 'insults'
+        self.results_key = 'filtered_results'
+        self.r.delete(self.results_key)
 
     def add_text(self, text):
-        if self.insults_cache is None:
-            self._load_insults()
+        insults = list(self.r.smembers(self.insults_key))
         out = text
-        for ins in self.insults_cache:
+        for ins in insults:
             out = out.replace(ins, 'CENSORED')
-        self.results.append(out)
+        self.r.rpush(self.results_key, out)
         return True
 
     def get_results(self):
-        return list(self.results)
+        return self.r.lrange(self.results_key, 0, -1)
 
 
 def main():
-    mgr = multiprocessing.Manager()
-    results = mgr.list()
-    uri_insult = "PYRO:InsultService@localhost:9000"
+    parser = argparse.ArgumentParser(description='Pyro InsultFilterService with Redis backend')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind the Pyro daemon')
+    parser.add_argument('--port', type=int, required=True, help='Port to bind the Pyro daemon')
+    parser.add_argument('--redis-host', default='localhost', help='Redis host')
+    parser.add_argument('--redis-port', type=int, default=6379, help='Redis port')
+    args = parser.parse_args()
 
-    daemon = Pyro4.Daemon(host="0.0.0.0", port=9015)
-    uri = daemon.register(InsultFilterService(uri_insult, results),
-                           objectId="InsultFilterService")
-    print(f"[InsultFilter] URI: {uri}")
+    service = InsultFilterService(args.redis_host, args.redis_port)
 
+    daemon = Pyro4.Daemon(host=args.host, port=args.port)
+    uri = daemon.register(service, objectId="InsultFilterService")
+    print(f"[InsultFilterService] URI: {uri}")
     daemon.requestLoop()
 
-if __name__ == '__main__':
+
+if __name__=='__main__':
     main()

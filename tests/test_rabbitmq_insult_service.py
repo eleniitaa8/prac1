@@ -7,6 +7,10 @@ sys.path.insert(0, root)
 import pytest, multiprocessing, time, pika, json, uuid
 from rabbitmq_impl.insult_service import service as srv_mod
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:.*isSet\\(\\) is deprecated.*:DeprecationWarning"
+)
+
 # Helper para RPC
 def rpc_call(method, text=None):
     conn = pika.BlockingConnection(pika.ConnectionParameters('localhost'))
