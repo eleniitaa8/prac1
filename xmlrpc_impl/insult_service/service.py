@@ -1,5 +1,5 @@
 from xmlrpc.server import SimpleXMLRPCServer, SimpleXMLRPCRequestHandler
-import threading, time, random, xmlrpc.client, redis, argparse, sys
+import threading, time, random, xmlrpc.client, redis, argparse, sys, queue
 
 class InsultService:
     def __init__(self, redis_host='localhost', redis_port=6379):
@@ -10,50 +10,75 @@ class InsultService:
         self.pub_channel = 'insults_pubsub'
         # Limpiar estado previo
         self.r.delete(self.insults_key, self.subs_key)
-        # lanzar broadcaster en hilo demonio
+        # Cache local de insultos
+        self.local_insults = set()
+        # Cola interna para notificaciones callback
+        self.cb_queue = queue.Queue()
+        # Lanzar worker de callbacks (desacoplado de la ruta crítica)
+        threading.Thread(target=self._cb_worker, daemon=True).start()
+        # Lanzar broadcaster periódico en hilo demonio
         threading.Thread(target=self._broadcaster, daemon=True).start()
 
     def add_insult(self, text):
-        # Añade insulto si no existe
-        added = self.r.sadd(self.insults_key, text)
-        # Si se añadió, notificar inmediatamente a subscriptores
+        """
+        Añade un insulto si no existe, publica por pub/sub y encola notificación
+        para callbacks.
+        """
+        # Pipeline: SADD + PUBLISH en una sola ida/vuelta a Redis
+        pipe = self.r.pipeline()
+        pipe.sadd(self.insults_key, text)
+        pipe.publish(self.pub_channel, text)
+        added, _ = pipe.execute()
+
         if added:
-            # 1) Notificar a callbacks
-            subs = list(self.r.smembers(self.subs_key))
-            for sub in subs:
-                host,port = sub.split(':')
-                try:
-                    proxy = xmlrpc.client.ServerProxy(f'http://{host}:{port}', allow_none=True)
-                    proxy.receive_insult(text)
-                except:
-                    self.r.srem(self.subs_key, sub)
-            # 2) PUBLICAR al canal Redis (pub/sub es muy barato)
-            self.r.publish(self.pub_channel, text)
+            # Solo si realmente se añadió al set
+            self.cb_queue.put(text)
         return bool(added)
 
     def get_insults(self):
+        """Devuelve la lista completa de insultos."""
         return list(self.r.smembers(self.insults_key))
 
     def subscribe(self, host, port):
+        """
+        Registra un subscriber (host:port) para callbacks.
+        """
         sub = f"{host}:{port}"
         self.r.sadd(self.subs_key, sub)
         return True
 
+    def _cb_worker(self):
+        """
+        Worker que procesa la cola de nuevos insultos y llama a
+        receive_insult en cada subscriber vía XML-RPC.
+        """
+        while True:
+            insult = self.cb_queue.get()
+            subs = list(self.r.smembers(self.subs_key))
+            for sub in subs:
+                host, port = sub.split(':')
+                uri = f'http://{host}:{port}'
+                try:
+                    proxy = xmlrpc.client.ServerProxy(uri, allow_none=True)
+                    proxy.receive_insult(insult)
+                except Exception:
+                    # Si falla, eliminamos el subscriber
+                    self.r.srem(self.subs_key, sub)
+            self.cb_queue.task_done()
+   
     def _broadcaster(self):
-        # Envíos periódicos cada 5s
+        """
+        Cada 5s envía un insulto aleatorio a todos los subscribers,
+        encolándolo para que lo repartan los callbacks.
+        """
         while True:
             time.sleep(5)
-            insults = self.get_insults()
-            subs    = self.r.smembers(self.subs_key)
-            if not insults or not subs: continue
+            insults = list(self.r.smembers(self.insults_key))
+            if not insults:
+                continue
             insult = random.choice(insults)
-            for sub in list(subs):
-                host,port = sub.split(':')
-                try:
-                    proxy = xmlrpc.client.ServerProxy(f'http://{host}:{port}', allow_none=True)
-                    proxy.receive_insult(insult)
-                except:
-                    self.r.srem(self.subs_key, sub)
+            # Encolamos para notificar igual que en add_insult
+            self.cb_queue.put(insult)
 
 
 def main():

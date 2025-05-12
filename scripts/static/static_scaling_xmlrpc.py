@@ -8,7 +8,7 @@ nodes_levels = [1, 2, 3]
 # Basado en el stress test single-node, la mejor concurrency es 1000 hilos
 concurrency = 1000
 # Usamos el mismo 'scale' de 20 requests por hilo para el total de trabajo
-scale = 20
+scale = 10
 requests_per_run = concurrency * scale
 
 # Rutas

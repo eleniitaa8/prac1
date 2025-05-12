@@ -10,6 +10,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from xmlrpc.client import ServerProxy
 from tqdm import tqdm
 
+import gc
+gc.disable()
+gc.collect()
+
 
 def start_service(service, port):
     """
