@@ -9,6 +9,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import Pyro4
 
+import gc
+gc.disable()
+gc.collect()
+
 # ProxyManager para modos "single" (no usado en "static")
 # Mecanismo de reintentos con back-off exponencial: 
 #   - max_retries: número máximo de reintentos

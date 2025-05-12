@@ -11,24 +11,25 @@ class InsultService:
         self.channel = 'insults_pubsub'
         # Limpiar estado previo
         self.r.delete(self.insults_key, self.subs_key)
+        # pubsub listener
+        self.pubsub = self.r.pubsub(ignore_subscribe_messages=True)
+        self.pubsub.subscribe(self.channel)
+        threading.Thread(target=self._pubsub_listener, daemon=True).start()
 
     def add_insult(self, text):
-        # Añade insulto si no existe
-        added = self.r.sadd(self.insults_key, text)
+        # pipeline atómico: sadd + publish
+        pipe = self.r.pipeline()
+        pipe.sadd(self.insults_key, text)
+        pipe.publish(self.channel, text)
+        added, _ = pipe.execute()
         if added:
-            # Notificar inmediatamente a suscriptores activos por Pyro callbacks
-            subs = list(self.r.smembers(self.subs_key))
-            for sub in subs:
+            # callbacks Pyro inmediatos
+            for sub in list(self.r.smembers(self.subs_key)):
+                host,port = sub.split(':')
                 try:
-                    host, port = sub.split(':')
-                    uri = f"PYRO:CallbackServer@{host}:{port}"
-                    proxy = Pyro4.Proxy(uri)
-                    proxy.receive_insult(text)
-                except Exception:
-                    # Eliminar suscriptor caído
+                    Pyro4.Proxy(f"PYRO:CallbackServer@{host}:{port}").receive_insult(text)
+                except:
                     self.r.srem(self.subs_key, sub)
-                # 2) Publish al canal de redis
-                self.r.publish(self.channel, text)
         return bool(added)
 
     def get_insults(self):
@@ -40,23 +41,35 @@ class InsultService:
         sub = f"{host}:{port}"
         self.r.sadd(self.subs_key, sub)
         return True
+    
+    def _pubsub_listener(self):
+        # envía también los publies periódicos
+        for msg in self.pubsub.listen():
+            insult = msg['data']
+            # redis.publish también dispara esto
+            # aquí podrías reenviar a callbacks si quisieras:
+            # mismo loop que en add_insult
+            for sub in list(self.r.smembers(self.subs_key)):
+                host,port = sub.split(':')
+                try:
+                    Pyro4.Proxy(f"PYRO:CallbackServer@{host}:{port}").receive_insult(insult)
+                except:
+                    self.r.srem(self.subs_key, sub)
 
     def _broadcaster(self):
-        # Envíos periódicos cada 5s
+        # periodic broadcaster clásico
         while True:
             time.sleep(5)
             insults = list(self.r.smembers(self.insults_key))
-            subs = list(self.r.smembers(self.subs_key))
+            subs    = list(self.r.smembers(self.subs_key))
             if not insults or not subs:
                 continue
             insult = random.choice(insults)
             for sub in subs:
+                host,port = sub.split(':')
                 try:
-                    host, port = sub.split(':')
-                    uri = f"PYRO:CallbackServer@{host}:{port}"
-                    proxy = Pyro4.Proxy(uri)
-                    proxy.receive_insult(insult)
-                except Exception:
+                    Pyro4.Proxy(f"PYRO:CallbackServer@{host}:{port}").receive_insult(insult)
+                except:
                     self.r.srem(self.subs_key, sub)
 
 def main():

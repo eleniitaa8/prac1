@@ -7,6 +7,7 @@ nodes_levels = [1, 2, 3]
 concurrency   = 40      # punto de pico en single-node (~1900 req/s)
 scale         = 100     # para total_requests = 40 * 100 = 4000
 requests_per_run = concurrency * scale  # = 4000
+repetitions = 3
 
 # 2. Rutas
 root_dir         = Path(__file__).resolve().parents[2]
@@ -19,39 +20,43 @@ output_file      = output_dir / 'pyro_static.csv'
 with open(output_file, 'w', newline='') as f:
     writer = csv.writer(f)
     writer.writerow(['nodes', 'throughput_req_per_s', 'speedup'])
+
     base_thr = None
 
     for n in nodes_levels:
-        print(f"Running static-scaling Pyro4 with {n} node(s): "
-              f"concurrency={concurrency}, requests={requests_per_run}")
-        cmd = [
-            sys.executable, str(benchmark_script),
-            '--service', 'insult',
-            '--mode',    'static',
-            '--nodes',   str(n),
-            '--concurrency', str(concurrency),
-            '--requests',    str(requests_per_run)
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        # Para depurar:
-        # print("STDOUT:", res.stdout)
-        # print("STDERR:", res.stderr)
+        throughputs = []
+        print(f"\n=== Nodo(s) = {n} — {repetitions} repeticiones ===")
+        for i in range(1, repetitions + 1):
+            print(f"  Repetición {i}/{repetitions}...", end=' ')
+            cmd = [
+                sys.executable, str(benchmark_script),
+                '--service',      'insult',
+                '--mode',         'static',
+                '--nodes',        str(n),
+                '--concurrency',  str(concurrency),
+                '--requests',     str(requests_per_run)
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Buscar la línea con 'req/s'
+            line = next((l for l in result.stdout.splitlines() if 'req/s' in l), None)
+            if not line:
+                print("❌ fallo al extraer throughput")
+                continue
+            thr = float(line.split('->')[1].split()[0])
+            throughputs.append(thr)
+            print(f"throughput={thr:.2f} req/s")
 
-        # Buscar throughput
-        line = next((l for l in res.stdout.splitlines() if 'req/s' in l), None)
-        if not line:
-            print(f"  ❌ No throughput found for {n} nodes")
-            continue
-
-        # Extraer número antes de 'req/s'
-        thr = float(line.split('->')[1].split()[0])
+        if not throughputs:
+            avg_thr = 0.0
+        else:
+            avg_thr = sum(throughputs) / len(throughputs)
         if n == 1:
-            base_thr = thr
+            base_thr = avg_thr
             speedup = 1.0
         else:
-            speedup = thr / base_thr if base_thr else None
+            speedup = avg_thr / base_thr if base_thr and base_thr > 0 else 0.0
 
-        print(f"  → throughput={thr:.2f} req/s, speedup={speedup:.2f}")
-        writer.writerow([n, f"{thr:.2f}", f"{speedup:.2f}"])
+        print(f"→ Promedio para {n} nodos: throughput={avg_thr:.2f} req/s, speedup={speedup:.2f}")
+        writer.writerow([n, f"{avg_thr:.2f}", f"{speedup:.2f}"])
 
-print("Results written to", output_file)
+print(f"\nResultados escritos en {output_file}")

@@ -32,3 +32,58 @@ print(f"Punto de saturación: throughput máximo ≈ {max_thr:.2f} req/s en conc
 # Punto donde errores empiezan a aparecer
 first_errors = df[df["errors"] > 0]["concurrency"].min()
 print(f"Umbral de saturación TCP (primer error) en concurrency = {first_errors}")
+
+# --------------------------------------------------
+# Análisis Static-scaling (Pyro4)
+# --------------------------------------------------
+
+# Cargar datos
+df_static = pd.read_csv(Path("output_files") / "pyro_static.csv")
+
+nodes = df_static["nodes"]
+throughput = df_static["throughput_req_per_s"]
+speedup    = df_static["speedup"]
+
+# 1) Throughput por número de nodos
+plt.figure()
+bars = plt.bar(nodes, throughput, width=0.5, color='C0')
+for bar in bars:
+    h = bar.get_height()
+    x = bar.get_x() + bar.get_width() / 2
+    plt.text(
+        x,           # posición horizontal: centro de la barra
+        h * 0.5,     # posición vertical: mitad de la altura
+        f"{h:.0f}",  # texto
+        ha='center', va='center',
+        color='white'
+    )
+plt.xlabel("Número de nodos")
+plt.ylabel("Throughput (req/s)")
+plt.title("Pyro4 Static Scaling: Throughput vs Nodos")
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.xticks(nodes)
+plt.xlim(min(nodes) - 0.5, max(nodes) + 0.5)
+plt.tight_layout()
+plt.show()
+
+# 2) Speed-up real por número de nodos
+plt.figure()
+bars = plt.bar(nodes, speedup, width=0.5, color='C1')
+for bar in bars:
+    h = bar.get_height()
+    x = bar.get_x() + bar.get_width() / 2
+    plt.text(
+        x,
+        h * 0.5,
+        f"{h:.2f}",
+        ha='center', va='center',
+        color='white'
+    )
+plt.xlabel("Número de nodos")
+plt.ylabel("Speed-up real")
+plt.title("Pyro4 Static Scaling: Speed-up real vs Nodos")
+plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.xticks(nodes)
+plt.xlim(min(nodes) - 0.5, max(nodes) + 0.5)
+plt.tight_layout()
+plt.show()

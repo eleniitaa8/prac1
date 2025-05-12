@@ -4,8 +4,8 @@ import sys
 import re
 from pathlib import Path
 
-concurrency_levels = [1, 10, 20, 40, 50, 80, 90, 100, 125, 150]
-scale = 20
+concurrency_levels = [1, 10, 20, 40, 50, 80, 90, 100, 125, 150, 200, 250]
+scale = 100
 benchmark_script = Path(__file__).resolve().parents[2] / 'benchmark' / 'pyro_performance.py'
 output_dir = Path(__file__).resolve().parents[2] / 'output_files'
 output_file = output_dir / 'pyro_stress.csv'

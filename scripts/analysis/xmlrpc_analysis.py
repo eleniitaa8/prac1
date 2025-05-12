@@ -42,37 +42,49 @@ print(f"Umbral de saturación TCP (primer error) single-node: concurrency = {fir
 df_static = pd.read_csv(Path("output_files") / "xmlrpc_static.csv")
 
 nodes = df_static["nodes"]
-thr   = df_static["throughput_req_per_s"]
-speed = df_static["speedup"]
-ideal = nodes.astype(float)  # speed-up ideal = N
+throughput = df_static["throughput_req_per_s"]
+speedup    = df_static["speedup"]
 
-# 1) Throughput por número de nodos (barras)
+# 1) Throughput por número de nodos
 plt.figure()
-plt.bar(nodes, thr, width=0.6)
-for x, y in zip(nodes, thr):
-    plt.text(x, y + y*0.02, f"{y:.0f}", ha='center')
+bars = plt.bar(nodes, throughput, width=0.5, color='C0')
+for bar in bars:
+    h = bar.get_height()
+    x = bar.get_x() + bar.get_width() / 2
+    plt.text(
+        x,           # posición horizontal: centro de la barra
+        h * 0.5,     # posición vertical: mitad de la altura
+        f"{h:.0f}",  # texto
+        ha='center', va='center',
+        color='white'
+    )
 plt.xlabel("Número de nodos")
 plt.ylabel("Throughput (req/s)")
 plt.title("XML-RPC Static Scaling: Throughput vs Nodos")
 plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.xticks(nodes)
+plt.xlim(min(nodes) - 0.5, max(nodes) + 0.5)
 plt.tight_layout()
 plt.show()
 
-# 2) Speed-up real vs ideal (barras agrupadas)
-x = np.arange(len(nodes))
-width = 0.35
-
+# 2) Speed-up real por número de nodos
 plt.figure()
-plt.bar(x - width/2, speed, width, label="Speedup real")
-plt.bar(x + width/2, ideal, width, label="Speedup ideal")
-plt.xticks(x, nodes)
-for i in range(len(nodes)):
-    plt.text(x[i]-width/2, speed[i] + 0.02, f"{speed[i]:.2f}", ha='center')
-    plt.text(x[i]+width/2, ideal[i] + 0.02, f"{ideal[i]:.0f}", ha='center')
+bars = plt.bar(nodes, speedup, width=0.5, color='C1')
+for bar in bars:
+    h = bar.get_height()
+    x = bar.get_x() + bar.get_width() / 2
+    plt.text(
+        x,
+        h * 0.5,
+        f"{h:.2f}",
+        ha='center', va='center',
+        color='white'
+    )
 plt.xlabel("Número de nodos")
-plt.ylabel("Speedup")
-plt.title("XML-RPC Static Scaling: Speedup real vs Ideal")
-plt.legend()
+plt.ylabel("Speed-up real")
+plt.title("XML-RPC Static Scaling: Speed-up real vs Nodos")
 plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.xticks(nodes)
+plt.xlim(min(nodes) - 0.5, max(nodes) + 0.5)
 plt.tight_layout()
 plt.show()
