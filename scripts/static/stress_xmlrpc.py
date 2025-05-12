@@ -15,7 +15,7 @@ scale = 20  # número de requests por hilo
 
 benchmark_script = Path(__file__).resolve().parents[2] / 'benchmark' / 'xmlrpc_performance.py'
 output_dir = Path(__file__).resolve().parents[2] / 'output_files'
-output_file = output_dir / 'xmlrpc_single_node.csv'
+output_file = output_dir / 'xmlrpc_stress.csv'
 
 # Crear directorio de salida
 output_dir.mkdir(parents=True, exist_ok=True)

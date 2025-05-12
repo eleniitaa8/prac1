@@ -7,23 +7,28 @@ class InsultService:
         self.r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
         self.insults_key = 'insults'
         self.subs_key = 'subscribers'
+        self.pub_channel = 'insults_pubsub'
         # Limpiar estado previo
         self.r.delete(self.insults_key, self.subs_key)
+        # lanzar broadcaster en hilo demonio
+        threading.Thread(target=self._broadcaster, daemon=True).start()
 
     def add_insult(self, text):
         # Añade insulto si no existe
         added = self.r.sadd(self.insults_key, text)
         # Si se añadió, notificar inmediatamente a subscriptores
         if added:
-            subs = self.r.smembers(self.subs_key)
+            # 1) Notificar a callbacks
+            subs = list(self.r.smembers(self.subs_key))
             for sub in subs:
-                host, port = sub.split(':')
+                host,port = sub.split(':')
                 try:
                     proxy = xmlrpc.client.ServerProxy(f'http://{host}:{port}', allow_none=True)
                     proxy.receive_insult(text)
-                except Exception:
-                    # Elimina subcriptor caído
+                except:
                     self.r.srem(self.subs_key, sub)
+            # 2) PUBLICAR al canal Redis (pub/sub es muy barato)
+            self.r.publish(self.pub_channel, text)
         return bool(added)
 
     def get_insults(self):
@@ -39,16 +44,15 @@ class InsultService:
         while True:
             time.sleep(5)
             insults = self.get_insults()
-            subs = self.r.smembers(self.subs_key)
-            if not insults or not subs:
-                continue
+            subs    = self.r.smembers(self.subs_key)
+            if not insults or not subs: continue
             insult = random.choice(insults)
             for sub in list(subs):
-                host, port = sub.split(':')
+                host,port = sub.split(':')
                 try:
                     proxy = xmlrpc.client.ServerProxy(f'http://{host}:{port}', allow_none=True)
                     proxy.receive_insult(insult)
-                except Exception:
+                except:
                     self.r.srem(self.subs_key, sub)
 
 
@@ -66,10 +70,6 @@ def main():
     server = SimpleXMLRPCServer(('localhost', port), requestHandler=RequestHandler, allow_none=True)
     svc = InsultService()
     server.register_instance(svc)
-
-    # Lanzar broadcaster en hilo demonio
-    t = threading.Thread(target=svc._broadcaster, daemon=True)
-    t.start()
 
     print(f"[InsultService] corriendo en puerto {port}...")
     try:

@@ -8,6 +8,7 @@ class InsultService:
         self.r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
         self.insults_key = 'insults'
         self.subs_key = 'subscribers'
+        self.channel = 'insults_pubsub'
         # Limpiar estado previo
         self.r.delete(self.insults_key, self.subs_key)
 
@@ -15,7 +16,7 @@ class InsultService:
         # Añade insulto si no existe
         added = self.r.sadd(self.insults_key, text)
         if added:
-            # Notificar inmediatamente a suscriptores activos
+            # Notificar inmediatamente a suscriptores activos por Pyro callbacks
             subs = list(self.r.smembers(self.subs_key))
             for sub in subs:
                 try:
@@ -26,6 +27,8 @@ class InsultService:
                 except Exception:
                     # Eliminar suscriptor caído
                     self.r.srem(self.subs_key, sub)
+                # 2) Publish al canal de redis
+                self.r.publish(self.channel, text)
         return bool(added)
 
     def get_insults(self):

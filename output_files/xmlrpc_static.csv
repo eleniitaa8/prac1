@@ -1,0 +1,4 @@
+nodes,throughput_req_per_s,speedup
+1,294.18,1.00
+2,378.94,1.29
+3,384.22,1.31

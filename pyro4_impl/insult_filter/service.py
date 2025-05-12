@@ -1,6 +1,7 @@
 import argparse
 import Pyro4
 import redis
+import threading
 
 @Pyro4.expose
 class InsultFilterService:
@@ -9,14 +10,29 @@ class InsultFilterService:
         self.r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
         self.insults_key = 'insults'
         self.results_key = 'filtered_results'
+        # cache local: arranca con lo que hay en Redis
+        self.insults_cache = set(self.r.smembers(self.insults_key))
         self.r.delete(self.results_key)
+        # lanza hilo de suscripción a pub/sub
+        t = threading.Thread(target=self._listen_insults, daemon=True)
+        t.start()
+
+    def _listen_insults(self):
+        pubsub = self.r.pubsub()
+        pubsub.subscribe('insults_pubsub')
+        for message in pubsub.listen():
+            if message['type'] == 'message':
+                self.insults_cache.add(message['data'])  # cachea sólo el nuevo insulto
 
     def add_text(self, text):
-        insults = list(self.r.smembers(self.insults_key))
+        # insults = list(self.r.smembers(self.insults_key))
         out = text
-        for ins in insults:
+        for ins in self.insults_cache:
             out = out.replace(ins, 'CENSORED')
-        self.r.rpush(self.results_key, out)
+        # batching: usamos pipeline para agrupar múltiples RPUSH
+        pipe = self.r.pipeline()
+        pipe.rpush(self.results_key, out)
+        pipe.execute()
         return True
 
     def get_results(self):
