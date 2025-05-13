@@ -4,10 +4,12 @@ import sys
 import re
 from pathlib import Path
 
-# Niveles de concurrencia a probar\ 
-concurrency_levels = [100, 500, 1000, 1250, 1500]
-# Número de peticiones por hilo\ 
-scale = 100
+# Niveles de concurrencia a probar 
+concurrency_levels = [100, 250, 500, 750, 1000, 1100, 1200]
+# Número de peticiones por hilo 
+scale = 20
+# Número de repeticiones para cada nivel de concurrencia
+repetitions = 3
 
 # Ruta al script de benchmark de Redis
 benchmark_script = Path(__file__).resolve().parents[2] / 'benchmark' / 'redis_performance.py'
@@ -18,49 +20,65 @@ output_dir.mkdir(parents=True, exist_ok=True)
 
 with open(output_file, 'w', newline='') as csvfile:
     writer = csv.writer(csvfile)
-    writer.writerow(['concurrency', 'requests', 'throughput_req_per_s', 'succeeded', 'errors'])
+    writer.writerow(['concurrency', 'requests', 'pool_size', 'avg_throughput_req_per_s', 'avg_succeeded', 'avg_errors'])
 
     for conc in concurrency_levels:
         total_requests = conc * scale
-        print(f"Running: concurrency={conc}, total_requests={total_requests}")
+        pool_size = conc  # ajustamos el pool igual al número de hilos
+        throughputs = []
+        successes = []
+        errors_list = []
 
-        cmd = [
-            sys.executable,
-            str(benchmark_script),
-            '--service', 'insult',
-            '--mode', 'single',
-            '--requests', str(total_requests),
-            '--concurrency', str(conc)
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        print(f"\nTesting concurrency={conc}, total_requests={total_requests}, pool_size={pool_size}")
+        for i in range(repetitions):
+            print(f" Run {i+1}/{repetitions}...", end='')
+            cmd = [
+                sys.executable,
+                str(benchmark_script),
+                '--service', 'insult',
+                '--mode', 'single',
+                '--requests', str(total_requests),
+                '--concurrency', str(conc),
+                '--max-connections', str(pool_size),  # parámetro de pool
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            stdout_lines = proc.stdout.strip().splitlines()
+            result_line = next((l for l in stdout_lines if 'req/s' in l), None)
 
-        stdout_lines = proc.stdout.strip().splitlines()
-        # Buscar la línea de resultado que contenga 'req/s'
-        result_line = next((l for l in stdout_lines if 'req/s' in l), None)
-
-        if not result_line:
-            err = proc.stderr.strip().replace('\n', ' ')
-            print(f"❌ No encontré resultado para concurrency={conc}, stderr: {err}")
-            throughput, succeeded, errors = 0.0, 0, total_requests
-        else:
-            # Ejemplo de línea: "... -> 422.40 req/s (5/5 succeeded, 0 errors)"
-            m = re.search(
-                r'->\s*([\d\.]+)\s*req/s\s*\((\d+)/(\d+) succeeded,\s*(\d+) errors\)',
-                result_line
-            )
-            if m:
-                throughput = float(m.group(1))
-                succeeded = int(m.group(2))
-                errors = int(m.group(4))
+            if not result_line:
+                err = proc.stderr.strip().replace('\n', ' ')
+                print(f" ❌ no result, stderr: {err}")
+                tp = 0.0
+                succ = 0
+                err_cnt = total_requests
             else:
-                # Fallback: extraer el primer número tras '->'
-                try:
-                    throughput = float(result_line.split('->')[1].strip().split()[0])
-                except Exception:
-                    throughput = 0.0
-                succeeded, errors = total_requests, 0
+                m = re.search(
+                    r'->\s*([\d\.]+)\s*req/s\s*\((\d+)/(\d+) succeeded,\s*(\d+) errors\)',
+                    result_line
+                )
+                if m:
+                    tp = float(m.group(1))
+                    succ = int(m.group(2))
+                    err_cnt = int(m.group(4))
+                else:
+                    try:
+                        tp = float(result_line.split('->')[1].strip().split()[0])
+                    except:
+                        tp = 0.0
+                    succ = total_requests
+                    err_cnt = 0
+                print(f" {tp:.2f} req/s, succ={succ}, err={err_cnt}")
 
-        print(f" -> {throughput:.2f} req/s, succeeded={succeeded}, errors={errors}")
-        writer.writerow([conc, total_requests, throughput, succeeded, errors])
+            throughputs.append(tp)
+            successes.append(succ)
+            errors_list.append(err_cnt)
 
-print(f"Results written to {output_file}")
+        # Cálculo de medias
+        avg_tp = sum(throughputs) / repetitions
+        avg_succ = sum(successes) // repetitions
+        avg_err = sum(errors_list) // repetitions
+        print(f" Avg -> {avg_tp:.2f} req/s, succ={avg_succ}, err={avg_err}")
+
+        writer.writerow([conc, total_requests, pool_size, f"{avg_tp:.2f}", avg_succ, avg_err])
+
+print(f"\nResults written to {output_file}")

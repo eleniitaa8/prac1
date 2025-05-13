@@ -1,16 +1,4 @@
-"""
-redis_performance.py: Script de benchmark para medir el rendimiento básico de Redis
-Permite modos:
-  - 'single': enviar todas las operaciones a una única instancia Redis
-  - 'static': repartir operaciones en round-robin entre varias instancias Redis ("shards" estáticos)
-
-Operaciones soportadas:
-  - 'insult': escribe cadenas aleatorias en un set 'insults'
-  - 'filter': lee el set 'insults' y simula una operación de filtrado reemplazando palabras por 'CENSORED'
-
-Uso:
-  python redis_performance.py --service insult --mode single --requests 10000 --concurrency 50
-"""
+# redis_performance.py
 import argparse
 import sys
 import time
@@ -19,21 +7,28 @@ import string
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import redis
 
-def worker_task(service, ports, host, n_requests, mode):
-    # Preparar clientes Redis según modo
-    if mode == 'static' and len(ports) > 1:
-        clients = [redis.Redis(host=host, port=p, decode_responses=True) for p in ports]
-    else:
-        clients = [redis.Redis(host=host, port=ports[0], decode_responses=True)]
+def worker_task(service, ports, host, n_requests, mode, max_connections=None):
+    # Preparar clientes Redis según modo, usando pool si está configurado
+    clients = []
+    for p in ports:
+        if max_connections:
+            pool = redis.ConnectionPool(
+                host=host,
+                port=p,
+                decode_responses=True,
+                max_connections=max_connections
+            )
+            clients.append(redis.Redis(connection_pool=pool))
+        else:
+            clients.append(redis.Redis(host=host, port=p, decode_responses=True))
 
     errors = 0
     start = time.time()
 
-    # Para modo 'filter', asegurarnos de que hay datos en el set
     if service == 'filter':
+        # Prellenar set si está vacío
         c0 = clients[0]
         if c0.scard('insults') == 0:
-            # Prellenar con insultos dummy
             for i in range(100):
                 c0.sadd('insults', f'word{i}')
 
@@ -43,9 +38,8 @@ def worker_task(service, ports, host, n_requests, mode):
             if service == 'insult':
                 text = ''.join(random.choices(string.ascii_lowercase, k=8))
                 r.sadd('insults', text)
-            else:  # filter: leer e iterar reemplazando
+            else:
                 insults = r.smembers('insults')
-                # generar texto de ejemplo y filtrar
                 sample = ' '.join(random.choice(list(insults)) for _ in range(5)) if insults else 'noinsults'
                 for ins in insults:
                     sample = sample.replace(ins, 'CENSORED')
@@ -55,30 +49,34 @@ def worker_task(service, ports, host, n_requests, mode):
     return elapsed, errors
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Redis performance benchmark: insult vs filter workloads')
+    parser = argparse.ArgumentParser(
+        description='Redis performance benchmark: insult vs filter workloads'
+    )
     parser.add_argument('--service', choices=['insult', 'filter'], required=True,
-                        help='Servicio a probar: insult=escritura en set, filter=lectura+procesado')
+                        help='Servicio a probar: insult=escritura, filter=lectura+procesado')
     parser.add_argument('--mode', choices=['single', 'static'], required=True,
-                        help='Modo single (una instancia) o static (múltiples shards round-robin)')
+                        help='Modo single o static (shards round-robin)')
     parser.add_argument('--nodes', type=int, default=1,
-                        help='Número de instancias Redis (solo en static mode)')
+                        help='Número de instancias Redis (static mode)')
     parser.add_argument('--requests', type=int, default=10000,
-                        help='Número total de operaciones a enviar')
+                        help='Total de operaciones a enviar')
     parser.add_argument('--concurrency', type=int, default=50,
-                        help='Número de hilos/clientes concurrentes')
+                        help='Número de hilos concurrentes')
     parser.add_argument('--redis-host', default='localhost',
-                        help='Host de Redis (por defecto: localhost)')
+                        help='Host de Redis')
     parser.add_argument('--redis-port', type=int, default=6379,
-                        help='Puerto base de Redis (por defecto: 6379)')
+                        help='Puerto base de Redis')
+    parser.add_argument('--max-connections', type=int, default=None,
+                        help='Máximo de conexiones en el pool por instancia')
     args = parser.parse_args()
 
-    # Calcular lista de puertos
+    # Lista de puertos según modo
     if args.mode == 'static':
         ports = [args.redis_port + i for i in range(args.nodes)]
     else:
         ports = [args.redis_port]
 
-    # Comprobar conectividad
+    # Verificar conectividad
     for p in ports:
         try:
             r = redis.Redis(host=args.redis_host, port=p, decode_responses=True)
@@ -88,10 +86,11 @@ if __name__ == '__main__':
             sys.exit(1)
     print(f"All Redis nodes are up (host={args.redis_host}, ports={ports})")
 
-    # Distribuir trabajo
     per_worker = args.requests // args.concurrency
-    tasks = [(args.service, ports, args.redis_host, per_worker, args.mode)
-             for _ in range(args.concurrency)]
+    tasks = [
+        (args.service, ports, args.redis_host, per_worker, args.mode, args.max_connections)
+        for _ in range(args.concurrency)
+    ]
 
     all_times = []
     all_errors = []
