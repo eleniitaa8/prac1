@@ -34,6 +34,7 @@ def worker_task(service, ports, host, n_requests, mode, max_connections=None):
 
     for i in range(n_requests):
         try:
+            # Seleccionar cliente según modo
             r = clients[i % len(clients)]
             if service == 'insult':
                 text = ''.join(random.choices(string.ascii_lowercase, k=8))

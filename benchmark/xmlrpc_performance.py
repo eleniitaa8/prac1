@@ -36,7 +36,7 @@ def worker_task(args):
     Devuelve (elapsed_time, error_count).
     """
     service, ports, n_requests = args
-    proxies = [ServerProxy(f'http://localhost:{p}', allow_none=True) for p in ports]
+    proxies = [ServerProxy(f'http://localhost:{p}', allow_none=True) for p in ports] # Crear proxies
     errors = 0
     start = time.time()
     for i in range(n_requests):
